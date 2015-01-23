@@ -1,4 +1,4 @@
-{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE NoMonomorphismRestriction #-}
 
 module Darjeelang where
 
@@ -110,45 +110,19 @@ eval ctx (TE t e) =
                                [] -> eval ctx1' texp1'
                                _ -> RFun ctx1' args' texp1'
 
-expSubtract = E $ EFun [(TTag "fst" TPrim, "x"), (TTag "snd" TPrim, "y")] $
-                       E $ EOp Minus (E $ EUntag $ E $ EVar "x")
-                                     (E $ EUntag $ E $ EVar "y")
+e2 con x y = E $ con x y
 
-exp5 = E $ EApp (E $ EApp expSubtract (E $ ETag "snd" $ E $ EPrim 4))
-                                      (E $ ETag "fst" $ E $ EPrim 9)
-
-class Expable a where
-    inj :: a -> Exp
-
-instance Expable Exp where
-    inj = id
-
-instance Integral a => Expable [[a]] where
-    inj = E . EPrim . fromIntegral . head . head
-
-instance Expable [Char] where
-    inj = E . EVar
-
-e1 con = E . con . inj
-e2 con x y = E $ con (inj x) (inj y)
-
-(+~), (-~), (*~) :: (Expable a, Expable b) => a -> b -> Exp
+prim = E . EPrim
 (+~) = e2 $ EOp Plus
 (-~) = e2 $ EOp Minus
 (*~) = e2 $ EOp Times
-
-tag :: Expable a => TagName -> a -> Exp
-tag name = e1 $ ETag name
-
-untag :: Expable a => a -> Exp
-untag = e1 EUntag
-
-fun :: Expable a => [(Typ, VarName)] -> a -> Exp
-fun args = e1 $ EFun args
-
-(%) :: (Expable a, Expable b) => a -> b -> Exp
+var = E . EVar
+tag name = E . ETag name
+untag = E . EUntag
+fun args = E . EFun args
 (%) = e2 EApp
 
-expSubtract' = fun [(TTag "fst" TPrim, "x"), (TTag "snd" TPrim, "y")] $ untag "x" -~ untag "y"
-exp5' :: Exp
-exp5' = expSubtract' % tag "snd" [[4]] % tag "fst" [[9]]
+expSubtract = fun [(TTag "fst" TPrim, "x"), (TTag "snd" TPrim, "y")] $
+                  untag (var "x") -~ untag (var "y")
+exp5 = expSubtract % tag "snd" (prim 4) % tag "fst" (prim 9)
+expNegative5 = expSubtract % tag "fst" (prim 4) % tag "snd" (prim 9)
