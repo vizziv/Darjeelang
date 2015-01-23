@@ -1,4 +1,6 @@
-{-# LANGUAGE NoMonomorphismRestriction #-}
+{-# LANGUAGE
+  NoMonomorphismRestriction,
+  TupleSections #-}
 
 module Darjeelang where
 
@@ -16,25 +18,25 @@ data Typ = TPrim
 
 data Op = Plus | Minus | Times deriving Show
 
-data ExpF e = EPrim Integer
-            | EOp Op e e
-            | ETag TagName e
-            | EUntag e
-            | EVar VarName
-            | EFun [(Typ, VarName)] e
-            | EApp e e
-            deriving Show
+data ExpF t e = EPrim Integer
+              | EOp Op e e
+              | ETag TagName e
+              | EUntag TagName e
+              | EVar VarName
+              | EFun [(t, VarName)] e
+              | EApp e e
+              deriving Show
 
-newtype Exp = E (ExpF Exp) deriving Show
+newtype Exp = E (ExpF Typ Exp) deriving Show
 
-data TypedExp = TE Typ (ExpF TypedExp) deriving Show
+data TypedExp = TE Typ (ExpF Typ TypedExp) deriving Show
 
 {-
 For now, we handle things nicely only if the following hold.
  * Argument type lists always appear in the same order.
  * Lists of single values have no duplicates.
  * Lists of tuples have no duplicate first members.
- * Variable names are unique.
+ * Variable names are unique (might be unnecessary, actually).
 We can handle the following errors but not gracefully.
  * Expressions are not well-typed.
  * Variables are not bound when referenced.
@@ -62,8 +64,10 @@ check ctx (E e) =
                           in TE TPrim (EOp op texp1 texp2)
       ETag name exp -> let texp@(TE typ _) = check ctx exp
                       in TE (TTag name typ) (ETag name texp)
-      EUntag exp -> let texp@(TE (TTag _ typ) _) = check ctx exp
-                    in TE typ (EUntag texp)
+      EUntag name exp -> let texp@(TE (TTag name' typ) _) = check ctx exp
+                         in if name == name'
+                            then TE typ (EUntag name texp)
+                            else undefined
       EVar var -> TE (fromCtx ctx var) (EVar var)
       EFun args exp -> let texp@(TE typ _) = check (addArgsToCtx ctx args) exp
                        in TE (TFun (argsTyps args) typ) (EFun args texp)
@@ -100,7 +104,7 @@ eval ctx (TE t e) =
                                 RPrim n2 = eval ctx texp2
                             in RPrim (applyOp op n1 n2)
       ETag name texp -> RTag name (eval ctx texp)
-      EUntag texp -> let RTag _ result = eval ctx texp in result
+      EUntag name texp -> let RTag _ result = eval ctx texp in result
       EVar var -> fromCtx ctx var
       EFun args texp -> RFun ctx args texp
       EApp texp1 texp2 -> let RFun ctx1 args1 texp1' = eval ctx texp1
@@ -111,18 +115,20 @@ eval ctx (TE t e) =
                                _ -> RFun ctx1' args' texp1'
 
 e2 con x y = E $ con x y
-
 prim = E . EPrim
 (+~) = e2 $ EOp Plus
 (-~) = e2 $ EOp Minus
 (*~) = e2 $ EOp Times
 var = E . EVar
-tag name = E . ETag name
-untag = E . EUntag
-fun args = E . EFun args
+tag = e2 ETag
+untag = e2 EUntag
+fun = e2 EFun
 (%) = e2 EApp
 
 expSubtract = fun [(TTag "fst" TPrim, "x"), (TTag "snd" TPrim, "y")] $
-                  untag (var "x") -~ untag (var "y")
+                  untag "fst" (var "x") -~ untag "snd" (var "y")
 exp5 = expSubtract % tag "snd" (prim 4) % tag "fst" (prim 9)
 expNegative5 = expSubtract % tag "fst" (prim 4) % tag "snd" (prim 9)
+
+expApply = fun [(TFun [TPrim] TPrim, "f"), (TPrim, "x")] (var "f" % var "x")
+exp6 = expApply % prim 2 % fun [(TPrim, "x")] (prim 3 *~ var "x")
