@@ -18,18 +18,18 @@ data Typ = TPrim
 
 data Op = Plus | Minus | Times deriving Show
 
-data ExpF t e = EPrim Integer
-              | EOp Op e e
-              | ETag TagName e
-              | EUntag TagName e
-              | EVar VarName
-              | EFun [(t, VarName)] e
-              | EApp e e
-              deriving Show
+data ExpF e = EPrim Integer
+            | EOp Op e e
+            | ETag TagName e
+            | EUntag TagName e
+            | EVar VarName
+            | EFun [(Typ, VarName)] e
+            | EApp e e
+            deriving Show
 
-newtype Exp = E (ExpF Typ Exp) deriving Show
+newtype Exp = E (ExpF Exp) deriving Show
 
-data TypedExp = TE Typ (ExpF Typ TypedExp) deriving Show
+data TypedExp = TE Typ (ExpF TypedExp) deriving Show
 
 {-
 For now, we handle things nicely only if the following hold.
@@ -125,10 +125,6 @@ untag = e2 EUntag
 fun = e2 EFun
 (%) = e2 EApp
 
-expSubtract = fun [(TTag "fst" TPrim, "x"), (TTag "snd" TPrim, "y")] $
-                  untag "fst" (var "x") -~ untag "snd" (var "y")
-exp5 = expSubtract % tag "snd" (prim 4) % tag "fst" (prim 9)
-expNegative5 = expSubtract % tag "fst" (prim 4) % tag "snd" (prim 9)
-
-expApply = fun [(TFun [TPrim] TPrim, "f"), (TPrim, "x")] (var "f" % var "x")
-exp6 = expApply % prim 2 % fun [(TPrim, "x")] (prim 3 *~ var "x")
+sub = fun [(TTag "fst" TPrim, "x"), (TTag "snd" TPrim, "y")]
+          (untag "fst" (var "x") -~ untag "snd" (var "y"))
+app = fun [(TFun [TPrim] TPrim, "f"), (TPrim, "x")] (var "f" % var "x")
