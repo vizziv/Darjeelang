@@ -1,7 +1,3 @@
-{-# LANGUAGE
-  NoMonomorphismRestriction,
-  TupleSections #-}
-
 module Darjeelang where
 
 import Data.Function
@@ -26,6 +22,7 @@ data ExpF e = EPrim Integer
             | EFun [(Typ, VarName)] e
             | EApp e e
             | EBranch e e e
+            | ELet [(Typ, VarName, e)] e
             deriving Show
 
 newtype Exp = E (ExpF Exp) deriving Show
