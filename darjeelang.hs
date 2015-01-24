@@ -6,6 +6,7 @@ import Data.Maybe
 
 type TagName = String
 type VarName = String
+type PrimExp = Integer
 
 data Typ = TPrim
          | TTag TagName Typ
@@ -14,20 +15,20 @@ data Typ = TPrim
 
 data Op = Plus | Minus | Times deriving Show
 
-data ExpF e = EPrim Integer
-            | EOp Op e e
-            | ETag TagName e
-            | EUntag e
-            | EVar VarName
-            | EFun [(Typ, VarName)] e
-            | EApp e e
-            | EBranch e e e
-            | ELets [(Typ, VarName, e)] e
-            deriving Show
+data ExpF t e = EPrim PrimExp
+              | EOp Op e e
+              | ETag TagName e
+              | EUntag e
+              | EVar VarName
+              | EFun [(t, VarName)] e
+              | EApp e e
+              | EBranch e e e
+              | ELets [(Typ, VarName, e)] e
+              deriving Show
 
-newtype Exp = E (ExpF Exp) deriving Show
+newtype Exp = E (ExpF Typ Exp) deriving Show
 
-data TypedExp = TE Typ (ExpF TypedExp) deriving Show
+data TypedExp = TE Typ (ExpF Typ TypedExp) deriving Show
 
 {-
 For now, we handle things nicely only if the following hold.
@@ -97,7 +98,7 @@ check ctx (E e) =
                  texp@(TE typ _) = ch' exp
              in TE typ (ELets (map chDecl decls) texp)
 
-data Result = RPrim Integer
+data Result = RPrim PrimExp
             | RTag TagName Result
             | RFun EvalContext [(Typ, VarName)] TypedExp
             deriving Show
