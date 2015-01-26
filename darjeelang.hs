@@ -32,14 +32,11 @@ newtype Exp = E (ExpF Typ Exp) deriving Show
 data TypedExp = TE Typ (ExpF Typ TypedExp) deriving Show
 
 {-
-For now, we handle things nicely only if the following hold.
- * Argument type lists always appear in the same order.
- * Lists of single values have no duplicates.
- * Lists of tuples have no duplicate first members.
- * Variable names are unique (might be unnecessary, actually).
 We can handle the following errors but not gracefully.
  * Expressions are not well-typed.
  * Variables are not bound when referenced.
+It might be necessary to give variables unique names, because closures aren't
+yet very well tested.
 -}
 
 type CheckContext = [(VarName, Typ)]
