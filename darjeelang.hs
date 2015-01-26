@@ -61,9 +61,19 @@ check ctx (E e) =
     in case e of
          EPrim prim -> TE TPrim (EPrim prim)
          EOp op exp1 exp2 ->
-             let texp1@(TE TPrim _) = ch exp1
-                 texp2@(TE TPrim _) = ch exp2
-             in TE TPrim (EOp op texp1 texp2)
+             let texp1@(TE typ1 _) = ch exp1
+                 texp2@(TE typ2 _) = ch exp2
+             in case (typ1, typ2) of
+                  (TPrim, TPrim) -> TE TPrim (EOp op texp1 texp2)
+                  (TTag name _, TPrim) -> TE typ1 (ETag name (ch (E $
+                      EOp op (E $ EUntag exp1) exp2)))
+                  (TPrim, TTag name _) -> TE typ2 (ETag name (ch (E $
+                      EOp op exp1 (E $ EUntag exp2))))
+                  (TTag name1 _, TTag name2 _) ->
+                      if name1 == name2
+                      then TE typ2 (ETag name1 (ch (E $
+                          EOp op (E $ EUntag exp1) (E $ EUntag exp2))))
+                      else undefined
          ETag name exp ->
              let texp@(TE typ _) = ch exp
              in TE (TTag name typ) (ETag name texp)
@@ -139,7 +149,8 @@ eval ctx (TE t e) =
              let RPrim n1 = ev texp1
              in ev (if n1 == 0 then texp2 else texp3)
          ELets decls texp ->
-             let ctx' = map (\(_,var,texp') -> (var, eval ctx' texp')) decls ++ ctx
+             let ctx' = map (\(_,var,texp') -> (var, eval ctx' texp')) decls ++
+                        ctx
              in eval ctx' texp
 
 run = eval [] . check []
