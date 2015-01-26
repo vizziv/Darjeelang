@@ -1,8 +1,9 @@
 module Darjeelang where
 
-import Data.Function
 import Data.List
 import Data.Maybe
+import qualified Data.Map as M
+import qualified Data.Set as S
 
 type TagName = String
 type VarName = String
@@ -10,8 +11,8 @@ type PrimExp = Integer
 
 data Typ = TPrim
          | TTag TagName Typ
-         | TFun [Typ] Typ
-         deriving (Eq, Show)
+         | TFun (S.Set Typ) Typ
+         deriving (Eq, Ord, Show)
 
 data Op = Plus | Minus | Times deriving Show
 
@@ -20,7 +21,7 @@ data ExpF t e = EPrim PrimExp
               | ETag TagName e
               | EUntag e
               | EVar VarName
-              | EFun [(t, VarName)] e
+              | EFun (M.Map t VarName) e
               | EApp e e
               | EBranch e e e
               | ELets [(Typ, VarName, e)] e
@@ -45,15 +46,14 @@ type CheckContext = [(VarName, Typ)]
 
 fromCtx ctx var = fromJust $ lookup var ctx
 
-addArgsToCtx ctx args = map (\(typ,var) -> (var,typ)) args ++ ctx
+addArgsToCtx ctx args = map (\(typ,var) -> (var,typ)) (M.toList args) ++ ctx
 addDeclsToCtx ctx decls = map (\(typ,var,_) -> (var,typ)) decls ++ ctx
 
-argsTyps = map fst
+argsTyps = M.keysSet
 
-checkUseArg typs typ =
-    case find (==typ) typs of
-      Nothing -> undefined
-      Just _ -> delete typ typs
+checkUseArg typs typ = if S.member typ typs
+                       then S.delete typ typs
+                       else undefined
 
 check :: CheckContext -> Exp -> TypedExp
 check ctx (E e) =
@@ -88,9 +88,7 @@ check ctx (E e) =
              let texp1@(TE (TFun typsA typZ) _) = ch exp1
                  texp2@(TE typ2 _) = ch exp2
                  typsB = checkUseArg typsA typ2
-                 typ = case typsB of
-                         [] -> typZ
-                         _ -> TFun typsB typZ
+                 typ = if S.null typsB then typZ else TFun typsB typZ
              in TE typ (EApp texp1 texp2)
          EBranch exp1 exp2 exp3 ->
              let texp1@(TE TPrim _) = ch exp1
@@ -102,15 +100,15 @@ check ctx (E e) =
          ELets decls exp ->
              let ch' = check (addDeclsToCtx ctx decls)
                  chDecl (typ,var,exp') = let texp'@(TE typ' _) = ch' exp'
-                                         in if typ == typ'
-                                            then (typ,var,texp')
-                                            else undefined
+                                           in if typ == typ'
+                                              then (typ,var,texp')
+                                              else undefined
                  texp@(TE typ _) = ch' exp
              in TE typ (ELets (map chDecl decls) texp)
 
 data Result = RPrim PrimExp
             | RTag TagName Result
-            | RFun EvalContext [(Typ, VarName)] TypedExp
+            | RFun EvalContext (M.Map Typ VarName) TypedExp
             deriving Show
 
 type EvalContext = [(VarName, Result)]
@@ -120,9 +118,9 @@ applyOp Minus = (-)
 applyOp Times = (*)
 
 evalUseArg args (TE typ exp) =
-    case lookup typ args of
+    case M.lookup typ args of
       Nothing -> undefined
-      Just var -> (var, delete (typ, var) args)
+      Just var -> (var, M.delete typ args)
 
 -- Assumes expressions are well-typed, e.g. EOps are applied only to EPrims.
 eval :: EvalContext -> TypedExp -> Result
@@ -142,9 +140,9 @@ eval ctx (TE t e) =
              let RFun ctx1 args1 texp1' = ev texp1
                  (var, args') = evalUseArg args1 texp2
                  ctx1' = (var, ev texp2) : ctx1
-             in case args' of
-                  [] -> eval ctx1' texp1'
-                  _ -> RFun ctx1' args' texp1'
+             in if M.null args'
+                then eval ctx1' texp1'
+                else  RFun ctx1' args' texp1'
          EBranch texp1 texp2 texp3 ->
              let RPrim n1 = ev texp1
              in ev (if n1 == 0 then texp2 else texp3)
@@ -166,11 +164,13 @@ infixl 6 *~
 var = E . EVar
 tag = e2 ETag
 untag = E . EUntag
-fun = e2 EFun
+fun = e2 EFun . M.fromList
 infixl 8 %
 (%) = e2 EApp
 branch exp1 exp2 exp3 = E $ EBranch exp1 exp2 exp3
 lets = e2 ELets
+
+tfun = TFun . S.fromList
 
 sub = fun [(TTag "fst" TPrim, "x"), (TTag "snd" TPrim, "y")]
           (untag (var "x") -~ untag (var "y"))
@@ -178,14 +178,14 @@ plus3 = fun [(TPrim, "x")] (var "x" +~ prim 3)
 minus5 = fun [(TPrim, "x")] (var "x" -~ prim 5)
 pick = fun [(TTag "choice" TPrim, "b"), (TPrim, "x")]
            ((branch (untag (var "b")) plus3 minus5) % var "x")
-app = fun [(TFun [TPrim] TPrim, "f"), (TPrim, "x")] (var "f" % var "x")
-factorial = lets [(TFun [TPrim] TPrim, "f",
+app = fun [(tfun [TPrim] TPrim, "f"), (TPrim, "x")] (var "f" % var "x")
+factorial = lets [(tfun [TPrim] TPrim, "f",
                    fun [(TPrim, "x")]
                        (branch (var "x")
                                (prim 1)
                                (var "x" *~ var "f" % (var "x" -~ prim 1))))]
                  (var "f")
-fibonacci = lets [(TFun [TTag "0" TPrim, TTag "1" TPrim, TPrim] TPrim, "f",
+fibonacci = lets [(tfun [TTag "0" TPrim, TTag "1" TPrim, TPrim] TPrim, "f",
                    fun [(TTag "0" TPrim, "y"),
                         (TTag "1" TPrim, "z"),
                         (TPrim, "x")]
