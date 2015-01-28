@@ -221,6 +221,8 @@ cases exp cs = E $ ECases exp (M.fromList
 match exp1 args exp2 = E $ EMatch exp1 (M.fromList args) exp2
 
 tfun = TFun . S.fromList
+tsum = TSum . S.fromList
+tprod = TProd . S.fromList
 
 -- Basic tests.
 sub = fun [(TTag "fst" TPrim, "x"), (TTag "snd" TPrim, "y")]
@@ -266,3 +268,6 @@ exp2 = lets [(tfun [TPrim] TPrim, "exp2",
                            (tfalse, "_", prim 2 *~
                                          var "exp2" % (var "x" -~ prim 1))]))]
             (var "exp2")
+pythagoras = fun [(tprod [TTag "A" TPrim, TTag "B" TPrim], "ab")]
+                 (match (var "ab") [(TTag "A" TPrim, "a"), (TTag "B" TPrim, "b")]
+                        (untag (var "a" *~ var "a") +~ untag (var "b" *~ var "b")))
