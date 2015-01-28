@@ -9,7 +9,8 @@ type TagName = String
 type VarName = String
 type Prim = Integer
 
-data Typ = TPrim
+data Typ = TAny -- Just used in type checking (for now).
+         | TPrim
          | TTag TagName Typ
          | TSum (S.Set Typ)
          | TProd (S.Set Typ)
@@ -55,6 +56,8 @@ addDeclsToCtx ctx decls = map (\(typ, var, _) -> (var, typ)) decls ++ ctx
 argsTyps = M.keysSet
 
 combine typ1 typ2 = case (typ1, typ2) of
+                      (TAny, typ) -> typ
+                      (typ, TAny) -> typ
                       (TSum typs1, TSum typs2) -> TSum (S.union typs1 typs2)
                       _ -> if typ1 == typ2 then typ1 else undefined
 
@@ -119,11 +122,24 @@ check ctx (E e) =
                                               else undefined
                  texp@(TE typ _) = ch' exp
              in TE typ (ELets (map chDecl decls) texp)
+         ECases exp cases ->
+             let handleCase typAcc typCase (var, exp) =
+                     let texp@(TE typ _) = check ((var, typCase) : ctx) exp
+                     in (combine typAcc typ, (var, texp))
+                 (typ, tcases) = M.mapAccumWithKey handleCase TAny cases
+                 texp@(TE (TSum _) _) = ch exp
+             in TE typ (ECases texp tcases)
+         EMatch exp1 args exp2 ->
+             let texp1@(TE typ1@(TProd typs1) _) = ch exp1
+                 texp2@(TE typ2 _) = check (addArgsToCtx ctx args) exp2
+             in if typs1 == M.keysSet args
+                then TE typ2 (EMatch texp1 args texp2)
+                else undefined
 
 data Value = VPrim Prim
            | VTag TagName Value
            | VSum Value
-           | VProd [Value]
+           | VProd (M.Map Typ Value)
            | VFun EvalContext (M.Map Typ VarName) TypedExp
            deriving Show
 
@@ -149,8 +165,11 @@ eval ctx (TE t e) =
                  VPrim n2 = ev texp2
              in VPrim (applyOp op n1 n2)
          ETag name texp -> VTag name (ev texp)
-         EUntag texp -> let VTag _ result = ev texp in result
+         EUntag texp -> let VTag _ val = ev texp in val
          EVar var -> fromCtx ctx var
+         ESum texp -> VSum (ev texp)
+         EProd texps -> VProd (M.fromList (map (\texp@(TE typ _) ->
+                                                (typ, ev texp)) texps))
          EFun args texp -> VFun ctx args texp
          EApp texp1 texp2 ->
              let VFun ctx1 args1 texp1' = ev texp1
@@ -163,10 +182,18 @@ eval ctx (TE t e) =
              let VPrim n1 = ev texp1
              in ev (if n1 == 0 then texp2 else texp3)
          ELets decls texp ->
-             let ctx' = map (\(_, var, texp') -> (var, eval ctx' texp'))
-                            decls ++
-                        ctx
+             let ctx' = (map (\(_, var, texp') -> (var, eval ctx' texp'))
+                         decls) ++ ctx
              in eval ctx' texp
+         ECases texp@(TE typ _) cases ->
+             let VSum val = ev texp
+                 (var, texp') = fromJust (M.lookup typ cases)
+             in eval ((var, val) : ctx) texp'
+         EMatch texp1 args texp2 ->
+              let VProd vals = ev texp1
+                  ctx' = map snd (M.toList (M.intersectionWith (,)
+                                            args vals)) ++ ctx
+              in eval ctx' texp2
 
 run = eval [] . check []
 
