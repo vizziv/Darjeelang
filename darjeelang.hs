@@ -11,25 +11,31 @@ type PrimExp = Integer
 
 data Typ = TPrim
          | TTag TagName Typ
+         | TSum (S.Set Typ)
+         | TProd (S.Set Typ)
          | TFun (S.Set Typ) Typ
          deriving (Eq, Ord, Show)
 
 data Op = Plus | Minus | Times deriving Show
 
-data ExpF t e = EPrim PrimExp
-              | EOp Op e e
-              | ETag TagName e
-              | EUntag e
-              | EVar VarName
-              | EFun (M.Map t VarName) e
-              | EApp e e
-              | EBranch e e e
-              | ELets [(Typ, VarName, e)] e
-              deriving Show
+data ExpF e = EPrim PrimExp
+            | EOp Op e e
+            | ETag TagName e
+            | EUntag e
+            | EVar VarName
+            | ESum e
+            | EProd [e]
+            | EFun (M.Map Typ VarName) e
+            | EApp e e
+            | EBranch e e e
+            | ELets [(Typ, VarName, e)] e
+            | ECases e (M.Map Typ (VarName, e))
+            | EMatch e (M.Map Typ VarName) e
+            deriving Show
 
-newtype Exp = E (ExpF Typ Exp) deriving Show
+newtype Exp = E (ExpF Exp) deriving Show
 
-data TypedExp = TE Typ (ExpF Typ TypedExp) deriving Show
+data TypedExp = TE Typ (ExpF TypedExp) deriving Show
 
 {-
 We can handle the following errors but not gracefully.
@@ -43,10 +49,14 @@ type CheckContext = [(VarName, Typ)]
 
 fromCtx ctx var = fromJust $ lookup var ctx
 
-addArgsToCtx ctx args = map (\(typ,var) -> (var,typ)) (M.toList args) ++ ctx
-addDeclsToCtx ctx decls = map (\(typ,var,_) -> (var,typ)) decls ++ ctx
+addArgsToCtx ctx args = map (\(typ, var) -> (var, typ)) (M.toList args) ++ ctx
+addDeclsToCtx ctx decls = map (\(typ, var, _) -> (var, typ)) decls ++ ctx
 
 argsTyps = M.keysSet
+
+combine typ1 typ2 = case (typ1, typ2) of
+                      (TSum typs1, TSum typs2) -> TSum (S.union typs1 typs2)
+                      _ -> if typ1 == typ2 then typ1 else undefined
 
 checkUseArg typs typ = if S.member typ typs
                        then S.delete typ typs
@@ -68,7 +78,7 @@ check ctx (E e) =
                       EOp op exp1 (E $ EUntag exp2))))
                   (TTag name1 _, TTag name2 _) ->
                       if name1 == name2
-                      then TE typ2 (ETag name1 (ch (E $
+                      then TE typ1 (ETag name1 (ch (E $
                           EOp op (E $ EUntag exp1) (E $ EUntag exp2))))
                       else undefined
          ETag name exp ->
@@ -78,6 +88,15 @@ check ctx (E e) =
              let texp@(TE (TTag _ typ) _) = ch exp
              in TE typ (EUntag texp)
          EVar var -> TE (fromCtx ctx var) (EVar var)
+         ESum exp ->
+             let texp@(TE typ _) = ch exp
+             in TE (TSum (S.singleton typ)) (ESum texp)
+         EProd exps ->
+             let texps = map ch exps
+                 typs = S.fromList (map (\(TE typ _) -> typ) texps)
+             in if length texps == S.size typs
+                then TE (TProd typs) (EProd texps)
+                else undefined
          EFun args exp ->
              let texp@(TE typ _) = check (addArgsToCtx ctx args) exp
              in TE (TFun (argsTyps args) typ) (EFun args texp)
@@ -91,12 +110,10 @@ check ctx (E e) =
              let texp1@(TE TPrim _) = ch exp1
                  texp2@(TE typ2 _) = ch exp2
                  texp3@(TE typ3 _) = ch exp3
-             in if typ2 == typ3
-                then TE typ2 (EBranch texp1 texp2 texp3)
-                else undefined
+             in TE (combine typ2 typ3) (EBranch texp1 texp2 texp3)
          ELets decls exp ->
              let ch' = check (addDeclsToCtx ctx decls)
-                 chDecl (typ,var,exp') = let texp'@(TE typ' _) = ch' exp'
+                 chDecl (typ, var, exp') = let texp'@(TE typ' _) = ch' exp'
                                            in if typ == typ'
                                               then (typ,var,texp')
                                               else undefined
