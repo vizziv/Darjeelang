@@ -7,7 +7,7 @@ import qualified Data.Set as S
 
 type TagName = String
 type VarName = String
-type PrimExp = Integer
+type Prim = Integer
 
 data Typ = TPrim
          | TTag TagName Typ
@@ -18,7 +18,7 @@ data Typ = TPrim
 
 data Op = Plus | Minus | Times deriving Show
 
-data ExpF e = EPrim PrimExp
+data ExpF e = EPrim Prim
             | EOp Op e e
             | ETag TagName e
             | EUntag e
@@ -120,12 +120,14 @@ check ctx (E e) =
                  texp@(TE typ _) = ch' exp
              in TE typ (ELets (map chDecl decls) texp)
 
-data Result = RPrim PrimExp
-            | RTag TagName Result
-            | RFun EvalContext (M.Map Typ VarName) TypedExp
-            deriving Show
+data Value = VPrim Prim
+           | VTag TagName Value
+           | VSum Value
+           | VProd [Value]
+           | VFun EvalContext (M.Map Typ VarName) TypedExp
+           deriving Show
 
-type EvalContext = [(VarName, Result)]
+type EvalContext = [(VarName, Value)]
 
 applyOp Plus = (+)
 applyOp Minus = (-)
@@ -137,31 +139,32 @@ evalUseArg args (TE typ exp) =
       Just var -> (var, M.delete typ args)
 
 -- Assumes expressions are well-typed, e.g. EOps are applied only to EPrims.
-eval :: EvalContext -> TypedExp -> Result
+eval :: EvalContext -> TypedExp -> Value
 eval ctx (TE t e) =
     let ev = eval ctx
     in case e of
-         EPrim n -> RPrim n
+         EPrim n -> VPrim n
          EOp op texp1 texp2 ->
-             let RPrim n1 = ev texp1
-                 RPrim n2 = ev texp2
-             in RPrim (applyOp op n1 n2)
-         ETag name texp -> RTag name (ev texp)
-         EUntag texp -> let RTag _ result = ev texp in result
+             let VPrim n1 = ev texp1
+                 VPrim n2 = ev texp2
+             in VPrim (applyOp op n1 n2)
+         ETag name texp -> VTag name (ev texp)
+         EUntag texp -> let VTag _ result = ev texp in result
          EVar var -> fromCtx ctx var
-         EFun args texp -> RFun ctx args texp
+         EFun args texp -> VFun ctx args texp
          EApp texp1 texp2 ->
-             let RFun ctx1 args1 texp1' = ev texp1
+             let VFun ctx1 args1 texp1' = ev texp1
                  (var, args') = evalUseArg args1 texp2
                  ctx1' = (var, ev texp2) : ctx1
              in if M.null args'
                 then eval ctx1' texp1'
-                else  RFun ctx1' args' texp1'
+                else VFun ctx1' args' texp1'
          EBranch texp1 texp2 texp3 ->
-             let RPrim n1 = ev texp1
+             let VPrim n1 = ev texp1
              in ev (if n1 == 0 then texp2 else texp3)
          ELets decls texp ->
-             let ctx' = map (\(_,var,texp') -> (var, eval ctx' texp')) decls ++
+             let ctx' = map (\(_, var, texp') -> (var, eval ctx' texp'))
+                            decls ++
                         ctx
              in eval ctx' texp
 
