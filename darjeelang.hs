@@ -21,9 +21,9 @@ data Op = Plus | Minus | Times deriving Show
 
 data ExpF e = EPrim Prim
             | EOp Op e e
+            | EVar VarName
             | ETag TagName e
             | EUntag e
-            | EVar VarName
             | ESum e
             | EProd [e]
             | EFun (M.Map Typ VarName) e
@@ -59,11 +59,11 @@ combine typ1 typ2 = case (typ1, typ2) of
                       (TAny, typ) -> typ
                       (typ, TAny) -> typ
                       (TSum typs1, TSum typs2) -> TSum (S.union typs1 typs2)
-                      _ -> if typ1 == typ2 then typ1 else undefined
+                      _ -> if typ1 == typ2 then typ1 else error "combine"
 
 checkUseArg typs typ = if S.member typ typs
                        then S.delete typ typs
-                       else undefined
+                       else error "checkUseArg"
 
 check :: CheckContext -> Exp -> TypedExp
 check ctx (E e) =
@@ -83,7 +83,7 @@ check ctx (E e) =
                       if name1 == name2
                       then TE typ1 (ETag name1 (ch (E $
                           EOp op (E $ EUntag exp1) (E $ EUntag exp2))))
-                      else undefined
+                      else error "check EOp"
          ETag name exp ->
              let texp@(TE typ _) = ch exp
              in TE (TTag name typ) (ETag name texp)
@@ -99,7 +99,7 @@ check ctx (E e) =
                  typs = S.fromList (map (\(TE typ _) -> typ) texps)
              in if length texps == S.size typs
                 then TE (TProd typs) (EProd texps)
-                else undefined
+                else error "check EProd"
          EFun args exp ->
              let texp@(TE typ _) = check (addArgsToCtx ctx args) exp
              in TE (TFun (argsTyps args) typ) (EFun args texp)
@@ -119,7 +119,7 @@ check ctx (E e) =
                  chDecl (typ, var, exp') = let texp'@(TE typ' _) = ch' exp'
                                            in if typ == typ'
                                               then (typ,var,texp')
-                                              else undefined
+                                              else error "check ELets"
                  texp@(TE typ _) = ch' exp
              in TE typ (ELets (map chDecl decls) texp)
          ECases exp cases ->
@@ -134,11 +134,11 @@ check ctx (E e) =
                  texp2@(TE typ2 _) = check (addArgsToCtx ctx args) exp2
              in if typs1 == M.keysSet args
                 then TE typ2 (EMatch texp1 args texp2)
-                else undefined
+                else error "check EMatch"
 
 data Value = VPrim Prim
            | VTag TagName Value
-           | VSum Value
+           | VSum Typ Value
            | VProd (M.Map Typ Value)
            | VFun EvalContext (M.Map Typ VarName) TypedExp
            deriving Show
@@ -151,7 +151,7 @@ applyOp Times = (*)
 
 evalUseArg args (TE typ exp) =
     case M.lookup typ args of
-      Nothing -> undefined
+      Nothing -> error "evalUseArg"
       Just var -> (var, M.delete typ args)
 
 -- Assumes expressions are well-typed, e.g. EOps are applied only to EPrims.
@@ -167,7 +167,7 @@ eval ctx (TE t e) =
          ETag name texp -> VTag name (ev texp)
          EUntag texp -> let VTag _ val = ev texp in val
          EVar var -> fromCtx ctx var
-         ESum texp -> VSum (ev texp)
+         ESum texp@(TE typ _) -> VSum typ (ev texp)
          EProd texps -> VProd (M.fromList (map (\texp@(TE typ _) ->
                                                 (typ, ev texp)) texps))
          EFun args texp -> VFun ctx args texp
@@ -186,7 +186,7 @@ eval ctx (TE t e) =
                          decls) ++ ctx
              in eval ctx' texp
          ECases texp@(TE typ _) cases ->
-             let VSum val = ev texp
+             let VSum typ val = ev texp
                  (var, texp') = fromJust (M.lookup typ cases)
              in eval ((var, val) : ctx) texp'
          EMatch texp1 args texp2 ->
@@ -208,14 +208,21 @@ infixl 6 *~
 var = E . EVar
 tag = e2 ETag
 untag = E . EUntag
+inj = E . ESum
+prod = E . EProd
 fun = e2 EFun . M.fromList
 infixl 8 %
 (%) = e2 EApp
 branch exp1 exp2 exp3 = E $ EBranch exp1 exp2 exp3
 lets = e2 ELets
+cases exp cs = E $ ECases exp (M.fromList
+                               (map (\(typ, var, exp) -> (typ, (var, exp)))
+                                cs))
+match exp1 args exp2 = E $ EMatch exp1 (M.fromList args) exp2
 
 tfun = TFun . S.fromList
 
+-- Basic tests.
 sub = fun [(TTag "fst" TPrim, "x"), (TTag "snd" TPrim, "y")]
           (untag (var "x") -~ untag (var "y"))
 plus3 = fun [(TPrim, "x")] (var "x" +~ prim 3)
@@ -223,6 +230,8 @@ minus5 = fun [(TPrim, "x")] (var "x" -~ prim 5)
 pick = fun [(TTag "choice" TPrim, "b"), (TPrim, "x")]
            ((branch (untag (var "b")) plus3 minus5) % var "x")
 app = fun [(tfun [TPrim] TPrim, "f"), (TPrim, "x")] (var "f" % var "x")
+
+-- Recursion.
 factorial = lets [(tfun [TPrim] TPrim, "f",
                    fun [(TPrim, "x")]
                        (branch (var "x")
@@ -233,10 +242,27 @@ fibonacci = lets [(tfun [TTag "0" TPrim, TTag "1" TPrim, TPrim] TPrim, "f",
                    fun [(TTag "0" TPrim, "y"),
                         (TTag "1" TPrim, "z"),
                         (TPrim, "x")]
-                        (branch (var "x")
-                                (untag (var "y"))
+                       (branch (var "x")
+                               (untag (var "y"))
                                (var "f" % tag "0" (untag (var "z")) %
                                           tag "1" (untag (var "y") +~
                                                    untag (var "z")) %
                                           (var "x" -~ prim 1))))]
                  (var "f" % tag "0" (prim 0) % tag "1" (prim 1))
+
+-- Cases and matches.
+true = inj (tag "True" (prim 0))
+false = inj (tag "False" (prim 0))
+ttrue = TTag "True" TPrim
+tfalse = TTag "False" TPrim
+equal = fun [(TTag "Left" TPrim, "left"), (TTag "Right" TPrim, "right")]
+            (branch (untag (var "left") -~ untag (var "right")) true false)
+-- There will one day be syntactic sugar for things like equality.
+eq x y = equal % (tag "Left" x) % (tag "Right" y)
+exp2 = lets [(tfun [TPrim] TPrim, "exp2",
+              fun [(TPrim, "x")]
+                  (cases (eq (var "x") (prim 0))
+                          [(ttrue, "_", prim 1),
+                           (tfalse, "_", prim 2 *~
+                                         var "exp2" % (var "x" -~ prim 1))]))]
+            (var "exp2")
