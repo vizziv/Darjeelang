@@ -323,3 +323,5 @@ listMap = lets [(tfun [tlist, tfun [TPrim] TPrim] tlist, "map",
                                     (cons % (var "f" % var "x")
                                           % (var "map" % var "xs" % var "f")))]))]
                (var "map")
+list = cons % (cons % (cons % (cons % (cons % nil %
+       prim 4) % prim 3) % prim 2) % prim 1) % prim 0
