@@ -50,7 +50,10 @@ It might be necessary to give variables unique names, because closures aren't
 yet very well tested.
 -}
 
-type TypContext = [(DataName, Typ)]
+type TypContext = [(DataName, S.Set Typ)]
+
+typCtx = [("List", S.fromList [TTag "Nil" TPrim,
+                               TProd (S.fromList [TPrim, TData "List"])])]
 
 type CheckContext = [(VarName, Typ)]
 
@@ -58,16 +61,13 @@ fromCtx ctx var = fromJust $ lookup var ctx
 tryFromTypCtx typ@(TData dat) =
     case lookup dat typCtx of
       Nothing -> typ
-      Just typ' -> typ'
+      Just typs -> TSum typs
 tryFromTypCtx typ = typ
-tryFromTypCtxRev typ =
-    case lookup typ (map (\(k,v) -> (v,k)) typCtx) of
+tryFromTypCtxRev typ@(TSum typs) =
+    case lookup typs (map (\(k,v) -> (v,k)) typCtx) of
       Nothing -> typ
       Just dat -> TData dat
-
-typCtx = [("List", TSum (S.fromList
-                         [TTag "Nil" TPrim,
-                          TProd (S.fromList [TPrim, TData "List"])]))]
+tryFromTypCtxRev typ = typ
 
 canonicalize t = tryFromTypCtxRev $
     case t of
