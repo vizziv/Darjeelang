@@ -27,7 +27,7 @@ data ExpF e = EPrim Prim
             | EVar VarName
             | ETag TagName e
             | EUntag e
-            | ESum (S.Set Typ) e
+            | ESum (Either DataName (S.Set Typ)) e
             | EProd [e]
             | EFun (M.Map Typ VarName) e
             | EApp e e
@@ -35,7 +35,7 @@ data ExpF e = EPrim Prim
             | ELets [(Typ, VarName, e)] e
             | ECases e (M.Map Typ (VarName, e))
             | EMatch e (M.Map Typ VarName) e
-            | ECast Typ e
+            | EDatas [(DataName, S.Set Typ)] e
             deriving Show
 
 newtype Exp = E (ExpF Exp) deriving Show
@@ -52,35 +52,32 @@ yet very well tested.
 
 type TypContext = [(DataName, S.Set Typ)]
 
-typCtx = [("List", S.fromList [TTag "Nil" TPrim,
-                               TProd (S.fromList [TPrim, TData "List"])])]
-
 type CheckContext = [(VarName, Typ)]
 
 fromCtx ctx var = fromJust $ lookup var ctx
-tryFromTypCtx typ@(TData dat) =
+tryFromTypCtx typCtx typ@(TData dat) =
     case lookup dat typCtx of
       Nothing -> typ
       Just typs -> TSum typs
-tryFromTypCtx typ = typ
-tryFromTypCtxRev typ@(TSum typs) =
+tryFromTypCtx _ typ = typ
+tryFromTypCtxRev typCtx typ@(TSum typs) =
     case lookup typs (map (\(k,v) -> (v,k)) typCtx) of
       Nothing -> typ
       Just dat -> TData dat
-tryFromTypCtxRev typ = typ
+tryFromTypCtxRev _ typ = typ
 
-canonicalize t = tryFromTypCtxRev $
-    case t of
-      TTag name typ -> TTag name (canonicalize typ)
-      TSum typs -> TSum (S.map canonicalize typs)
-      TProd typs -> TProd (S.map canonicalize typs)
-      TFun typs typ -> TFun (S.map canonicalize typs) (canonicalize typ)
-      _ -> t
+canonicalize typCtx t =
+    let ca = canonicalize typCtx
+    in tryFromTypCtxRev typCtx $
+       case t of
+         TTag name typ -> TTag name (ca typ)
+         TSum typs -> TSum (S.map ca typs)
+         TProd typs -> TProd (S.map ca typs)
+         TFun typs typ -> TFun (S.map ca typs) (ca typ)
+         _ -> t
 
-addArgsToCtx ctx args = map (\(typ, var) -> (var, typ)) (M.toList args) ++ ctx
-addDeclsToCtx ctx decls = map (\(typ, var, _) -> (var, typ)) decls ++ ctx
-
-argsTyps = M.keysSet
+addArgs ctx args = map (\(typ, var) -> (var, typ)) (M.toList args) ++ ctx
+addDecls ctx decls = map (\(typ, var, _) -> (var, typ)) decls ++ ctx
 
 combine typ1 typ2 = case (typ1, typ2) of
                       (TAny, typ) -> typ
@@ -93,9 +90,9 @@ checkUseArg typs typ = if S.member typ typs
                        then S.delete typ typs
                        else error "checkUseArg"
 
-check :: CheckContext -> Exp -> TypedExp
-check ctx (E e) =
-    let ch = check ctx
+check :: TypContext -> CheckContext -> Exp -> TypedExp
+check typCtx ctx (E e) =
+    let ch = check typCtx ctx
         TE typ texp =
             case e of
               EPrim prim -> TE TPrim (EPrim prim)
@@ -120,10 +117,13 @@ check ctx (E e) =
                   let texp@(TE (TTag _ typ) _) = ch exp
                   in TE typ (EUntag texp)
               EVar var -> TE (fromCtx ctx var) (EVar var)
-              ESum typs exp ->
+              ESum either exp ->
                   let texp@(TE typ _) = ch exp
+                      typs = case either of
+                               Left dat -> fromJust $ lookup dat typCtx
+                               Right typs -> typs
                   in if S.member typ typs
-                     then TE (TSum typs) (ESum typs texp)
+                     then TE (TSum typs) (ESum either texp)
                      else error "check ESum"
               EProd exps ->
                   let texps = map ch exps
@@ -132,8 +132,8 @@ check ctx (E e) =
                      then TE (TProd typs) (EProd texps)
                      else error "check EProd"
               EFun args exp ->
-                  let texp@(TE typ _) = check (addArgsToCtx ctx args) exp
-                  in TE (TFun (argsTyps args) typ) (EFun args texp)
+                  let texp@(TE typ _) = check typCtx (addArgs ctx args) exp
+                  in TE (TFun (M.keysSet args) typ) (EFun args texp)
               EApp exp1 exp2 ->
                   let texp1@(TE (TFun typsA typZ) _) = ch exp1
                       texp2@(TE typ2 _) = ch exp2
@@ -146,31 +146,34 @@ check ctx (E e) =
                       texp3@(TE typ3 _) = ch exp3
                   in TE (combine typ2 typ3) (EBranch texp1 texp2 texp3)
               ELets decls exp ->
-                  let ch' = check (addDeclsToCtx ctx decls)
+                  let ch' = check typCtx (addDecls ctx decls)
                       chDecl (typ, var, exp') =
                           let texp'@(TE typ' _) = ch' exp'
                           in if typ == typ'
-                             then (typ,var,texp')
+                             then (typ, var, texp')
                              else error "check ELets"
                       texp@(TE typ _) = ch' exp
                   in TE typ (ELets (map chDecl decls) texp)
               ECases exp cases ->
                   let handleCase typAcc typC (var, exp) =
-                          let texp@(TE typ _) = check ((var, typC) : ctx) exp
+                          let texp@(TE typ _) =
+                                  check typCtx ((var, typC) : ctx) exp
                           in (combine typAcc typ, (var, texp))
                       (typ, tcases) = M.mapAccumWithKey handleCase TAny cases
                       texp@(TE typSum _) = ch exp
-                      TSum typs = tryFromTypCtx typSum
+                      TSum typs = tryFromTypCtx typCtx typSum
                   in if typs == M.keysSet cases
                      then TE typ (ECases texp tcases)
                      else error "check ECases"
               EMatch exp1 args exp2 ->
                   let texp1@(TE typ1@(TProd typs1) _) = ch exp1
-                      texp2@(TE typ2 _) = check (addArgsToCtx ctx args) exp2
+                      texp2@(TE typ2 _) =
+                          check typCtx (addArgs ctx args) exp2
                   in if typs1 == M.keysSet args
                      then TE typ2 (EMatch texp1 args texp2)
                      else error "check EMatch"
-    in TE (canonicalize typ) texp
+              EDatas datas exp -> check (datas ++ typCtx) ctx exp
+    in TE (canonicalize typCtx typ) texp
 
 data Value = VPrim Prim
            | VTag TagName Value
@@ -190,9 +193,9 @@ evalUseArg args (TE typ exp) =
       Nothing -> error "evalUseArg"
       Just var -> (var, M.delete typ args)
 
-eval :: EvalContext -> TypedExp -> Value
-eval ctx (TE t e) =
-    let ev = eval ctx
+eval :: TypContext -> EvalContext -> TypedExp -> Value
+eval typCtx ctx (TE t e) =
+    let ev = eval typCtx ctx
     in case e of
          EPrim n -> VPrim n
          EOp op texp1 texp2 ->
@@ -202,7 +205,7 @@ eval ctx (TE t e) =
          ETag name texp -> VTag name (ev texp)
          EUntag texp -> let VTag _ val = ev texp in val
          EVar var -> fromCtx ctx var
-         ESum typs texp@(TE typ _) -> VSum typ (ev texp)
+         ESum _ texp@(TE typ _) -> VSum typ (ev texp)
          EProd texps -> VProd (M.fromList (map (\texp@(TE typ _) ->
                                                 (typ, ev texp)) texps))
          EFun args texp -> VFun ctx args texp
@@ -211,27 +214,32 @@ eval ctx (TE t e) =
                  (var, args') = evalUseArg args1 texp2
                  ctx1' = (var, ev texp2) : ctx1
              in if M.null args'
-                then eval ctx1' texp1'
+                then eval typCtx ctx1' texp1'
                 else VFun ctx1' args' texp1'
          EBranch texp1 texp2 texp3 ->
              let VPrim n1 = ev texp1
              in ev (if n1 == 0 then texp2 else texp3)
          ELets decls texp ->
-             let ctx' = (map (\(_, var, texp') -> (var, eval ctx' texp'))
+             -- This takes advantage of lazy evaluation to handle recursion.
+             -- Specifically, the EvalContext of a VFun might contain itself.
+             let ctx' = (map (\(_, var, texp') -> (var,
+                                                   eval typCtx ctx' texp'))
                          decls) ++ ctx
-             in eval ctx' texp
+             in eval typCtx ctx' texp
          ECases texp@(TE typ _) cases ->
              let VSum typ val = ev texp
                  (var, texp') = fromJust (M.lookup typ cases)
-             in eval ((var, val) : ctx) texp'
+             in eval typCtx ((var, val) : ctx) texp'
          EMatch texp1 args texp2 ->
               let VProd vals = ev texp1
                   ctx' = map snd (M.toList (M.intersectionWith (,)
                                             args vals)) ++ ctx
-              in eval ctx' texp2
+              in eval typCtx ctx' texp2
+         EDatas datas exp -> eval (datas ++ typCtx) ctx exp
 
-run = eval [] . check []
+run = eval [] [] . check [] []
 
+-- Nicer syntax for embedded language use for easier testing.
 e2 con x y = E $ con x y
 prim = E . EPrim
 infixl 6 +~
@@ -243,7 +251,8 @@ infixl 6 *~
 var = E . EVar
 tag = e2 ETag
 untag = E . EUntag
-sum = e2 ESum . S.fromList
+sum = e2 ESum . Right . S.fromList
+con = e2 ESum . Left
 prod = E . EProd
 fun = e2 EFun . M.fromList
 infixl 8 %
@@ -254,10 +263,28 @@ cases exp cs = E $ ECases exp (M.fromList
                                (map (\(typ, var, exp) -> (typ, (var, exp)))
                                 cs))
 match exp1 args exp2 = E $ EMatch exp1 (M.fromList args) exp2
-
+datas = e2 EDatas . map (\(dat, typs) -> (dat, S.fromList typs))
 tfun = TFun . S.fromList
 tsum = TSum . S.fromList
 tprod = TProd . S.fromList
+
+prelude = datas
+          [("List", [TTag "Nil" TPrim,
+                     TProd (S.fromList [TPrim, TData "List"])])] .
+          lets
+          [(tfun [tlist, tfun [TPrim] TPrim] tlist, "map",
+            fun [(tfun [TPrim] TPrim, "f"), (tlist, "list")]
+                (cases (var "list")
+                       [(tnil, "_", nil),
+                        (tcons, "cons",
+                         match (var "cons") [(TPrim, "x"), (tlist, "xs")]
+                               (cons % (var "f" % var "x") %
+                                       (var "map" % var "xs" % var "f")))])),
+           (tfun [TPrim] TPrim, "factorial",
+            fun [(TPrim, "x")]
+                (branch (var "x")
+                        (prim 1)
+                        (var "x" *~ var "factorial" % (var "x" -~ prim 1))))]
 
 -- Basic tests.
 sub = fun [(TTag "fst" TPrim, "x"), (TTag "snd" TPrim, "y")]
@@ -309,9 +336,9 @@ pythagoras = fun [(tprod [TTag "A" TPrim, TTag "B" TPrim], "ab")]
 
 -- Data types.
 tlist = TData "List"
-nil = sum [tnil, tcons] (tag "Nil" (prim 0))
+nil = con "List" (tag "Nil" (prim 0))
 cons = (fun [(TPrim, "x"), (tlist, "xs")]
-            (sum [tnil, tcons] (prod [var "x", var "xs"])))
+            (con "List" (prod [var "x", var "xs"])))
 tnil = TTag "Nil" TPrim
 tcons = tprod [TPrim, tlist]
 listMap = lets [(tfun [tlist, tfun [TPrim] TPrim] tlist, "map",
