@@ -78,10 +78,21 @@ term = (parens exp <|>) . (E <$>) $ choice
                                ((,) <$> typ <* colon <*> identifier) <*
                               reservedOp "->" <*> exp,
         ELets <$ reserved "let" <*> (braces . semiSep)
-                  ((,,) <$> typ <* colon <*> identifier <*
+                  (try funDecl <|>
+                   (,,) <$> typ <* colon <*> identifier <*
                    reservedOp "=" <*> exp) <*
                  reserved "in" <*> exp,
         EDatas <$ reserved "type" <*> (braces . semiSep)
                    ((,) <$> identifier <*
                     reservedOp "=" <* reservedOp "@" <*> typs) <*
                   reserved "in" <*> exp]
+
+funDecl = do
+  result <- typ
+  colon
+  var <- identifier
+  args <- M.fromList <$>
+          (braces . commaSep) ((,) <$> typ <* colon <*> identifier)
+  reservedOp "="
+  body <- exp
+  return (TFun (M.keysSet args) result, var, E $ EFun args body)
