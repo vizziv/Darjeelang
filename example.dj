@@ -1,0 +1,13 @@
+let {
+  {Int} -> Int : factorial =
+    {Int : x} ->
+    branch x zero 1 nonzero x * factorial (x-1);
+  {Int} -> Int : fibonacci =
+    let {
+      {Int, acc0~Int, acc1~Int} -> Int : fib =
+        {Int : x, acc0~Int : a0, acc1~Int : a1} ->
+        branch x
+        zero !a0
+        nonzero fib acc0~!a1 acc1~(!a0 + !a1) (x-1)
+    } in fib acc0~0 acc1~1
+} in factorial 5 + fibonacci 12
