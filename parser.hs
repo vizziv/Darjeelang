@@ -18,11 +18,11 @@ lang = P.LanguageDef {P.commentStart = "{-",
                       P.identStart = letter <|> char '_',
                       P.identLetter = alphaNum <|> char '_',
                       P.opStart = oneOf "!#$%&*+./<=>?@^|-~",
-                      P.opLetter = oneOf "!#$%&*+./<=>?@^|-~",
+                      P.opLetter = oneOf "#$%*+./<=>?^|-~", -- No prefixes.
                       P.reservedNames = ["let", "type", "branch", "zero",
                                          "nonzero", "Int"],
-                      P.reservedOpNames = ["+", "-", "*", "~", "!", "~!", "@",
-                                           "&", "->", "="],
+                      P.reservedOpNames = ["+", "-", "*", "~", "!", "@", "&",
+                                           "->", "="],
                       P.caseSensitive = True}
 
 lexer = P.makeTokenParser lang

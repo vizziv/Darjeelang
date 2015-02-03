@@ -7,7 +7,7 @@ let {
     Int : fib {Int : x, Acc0~Int : a0, Acc1~Int : a1} =
       branch x
       zero !a0
-      nonzero fib Acc0~!a1 (!a0+a1) (x-1)
+      nonzero fib Acc0~!a1 Acc1~(!a0+!a1) (x-1)
   } in fib Acc0~0 Acc1~1
 
 } in factorial 5 + fibonacci 12

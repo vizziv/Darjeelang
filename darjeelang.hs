@@ -101,10 +101,6 @@ check typCtx ctx (E e) =
                       texp2@(TE typ2 _) = ch exp2
                   in case (typ1, typ2) of
                        (TPrim, TPrim) -> TE TPrim (EOp op texp1 texp2)
-                       (TTag name _, TPrim) -> TE typ1 (ETag name (ch (E $
-                           EOp op (E $ EUntag exp1) exp2)))
-                       (TPrim, TTag name _) -> TE typ2 (ETag name (ch (E $
-                           EOp op exp1 (E $ EUntag exp2))))
                        (TTag name1 _, TTag name2 _) ->
                            if name1 == name2
                            then TE typ1 (ETag name1 (ch (E $
