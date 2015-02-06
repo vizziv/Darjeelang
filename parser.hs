@@ -97,20 +97,3 @@ term = (parens exp <|>) . (E <$>) $ choice
                    ((,) <$> identifier <*
                     reservedOp "=" <* reservedOp "@" <*> typs) <*
                   reserved "in" <*> exp]
-
--- TODO: finish this.
-layout keyword =
-    let untilKeyword = (,) <$>
-                       (manyTill anyToken . try . choice . map reserved $
-                        ["let", "type"]) <*>
-                       getInput
-        f (Just indent, acc) line =
-            if all (==' ') $ take indent line
-            then (Just indent, (';':line):acc)
-            else (Nothing, ('}':line):acc)
-        f (Nothing, acc) line =
-            case parse untilKeyword "" line of
-              Left _ -> (Nothing, line:acc)
-              -- TODO: make this way more flexible.
-              Right (xs, []) -> (Just (1 + length xs), line:acc)
-    in unlines . reverse . snd . foldl f (Nothing, []) . lines
