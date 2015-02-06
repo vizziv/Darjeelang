@@ -1,9 +1,9 @@
 let {
 
-; Int : factorial {Int : x} =
+  Int : factorial {Int : x} =
     branch x zero 1 nonzero x * factorial (x-1)
 
-; {Int} -> Int : fibonacci = let {
+  {Int} -> Int : fibonacci = let {
     Int : fib {Int : x, Acc0~Int : a0, Acc1~Int : a1} =
       branch x
       zero !a0

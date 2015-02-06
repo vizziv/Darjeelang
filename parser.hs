@@ -97,3 +97,16 @@ term = (parens exp <|>) . (E <$>) $ choice
                    ((,) <$> identifier <*
                     reservedOp "=" <* reservedOp "@" <*> typs) <*
                   reserved "in" <*> exp]
+
+layout lines =
+    let avoidSemi nextLine =
+            case dropWhile (==' ') nextLine of
+              "" -> True
+              '}':_ -> True
+              _ -> False
+    in case lines of
+         [] -> []
+         ("":l:ls) -> (if avoidSemi l then "" else ";") : layout (l:ls)
+         (l:ls) -> l : layout ls
+
+go = fmap run . parse exp "" . unlines . layout . lines
