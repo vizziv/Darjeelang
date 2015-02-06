@@ -6,7 +6,7 @@ import Prelude hiding (exp)
 import Control.Applicative
 import qualified Data.Map as M
 import qualified Data.Set as S
-import Text.Parsec hiding ((<|>))
+import Text.Parsec hiding ((<|>), optional)
 import Text.Parsec.Expr
 import qualified Text.Parsec.Token as P
 import Darjeelang
@@ -38,6 +38,7 @@ brackets = P.brackets lexer
 symbol = P.symbol lexer
 colon = P.colon lexer
 commaSep = P.commaSep lexer
+semi = P.semi lexer
 semiSep = P.semiSep lexer
 
 ops = [Infix (pure (e2 EApp)) AssocLeft] :
@@ -56,6 +57,16 @@ typ = choice
        TFun <$> typs <* reservedOp "->" <*> typ]
 
 typs = S.fromList <$> braces (commaSep typ)
+
+funDecl = do
+  result <- typ
+  colon
+  var <- identifier
+  args <- M.fromList <$>
+          (braces . commaSep) ((,) <$> typ <* colon <*> identifier)
+  reservedOp "="
+  body <- exp
+  return (TFun (M.keysSet args) result, var, E $ EFun args body)
 
 exp = buildExpressionParser ops term
 
@@ -77,22 +88,29 @@ term = (parens exp <|>) . (E <$>) $ choice
         EFun . M.fromList <$> (braces . commaSep)
                                ((,) <$> typ <* colon <*> identifier) <*
                               reservedOp "->" <*> exp,
-        ELets <$ reserved "let" <*> (braces . semiSep)
+        ELets <$ reserved "let" <*> (braces . ((optional semi) *>) . semiSep)
                   (try funDecl <|>
                    (,,) <$> typ <* colon <*> identifier <*
                    reservedOp "=" <*> exp) <*
                  reserved "in" <*> exp,
-        EDatas <$ reserved "type" <*> (braces . semiSep)
+        EDatas <$ reserved "type" <*> (braces . ((optional semi) *>) . semiSep)
                    ((,) <$> identifier <*
                     reservedOp "=" <* reservedOp "@" <*> typs) <*
                   reserved "in" <*> exp]
 
-funDecl = do
-  result <- typ
-  colon
-  var <- identifier
-  args <- M.fromList <$>
-          (braces . commaSep) ((,) <$> typ <* colon <*> identifier)
-  reservedOp "="
-  body <- exp
-  return (TFun (M.keysSet args) result, var, E $ EFun args body)
+-- TODO: finish this.
+layout keyword =
+    let untilKeyword = (,) <$>
+                       (manyTill anyToken . try . choice . map reserved $
+                        ["let", "type"]) <*>
+                       getInput
+        f (Just indent, acc) line =
+            if all (==' ') $ take indent line
+            then (Just indent, (';':line):acc)
+            else (Nothing, ('}':line):acc)
+        f (Nothing, acc) line =
+            case parse untilKeyword "" line of
+              Left _ -> (Nothing, line:acc)
+              -- TODO: make this way more flexible.
+              Right (xs, []) -> (Just (1 + length xs), line:acc)
+    in unlines . reverse . snd . foldl f (Nothing, []) . lines
