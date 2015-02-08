@@ -2,11 +2,15 @@
 
 module Parser where
 
+import Debug.Trace
+
 import Prelude hiding (exp)
 import Control.Applicative
+import Control.Monad
 import qualified Data.Map as M
 import qualified Data.Set as S
-import Text.Parsec hiding ((<|>), optional)
+import Text.Parsec hiding ((<|>), optional, many, parse)
+import qualified Text.Parsec as Parsec (parse)
 import Text.Parsec.Expr
 import qualified Text.Parsec.Token as P
 import Darjeelang
@@ -19,8 +23,9 @@ lang = P.LanguageDef {P.commentStart = "{-",
                       P.identLetter = alphaNum <|> char '_',
                       P.opStart = oneOf "!#$%&*+./<=>?@^|-~",
                       P.opLetter = oneOf "#$%*+./<=>?^|-~", -- No prefixes.
-                      P.reservedNames = ["let", "type", "branch", "zero",
-                                         "nonzero", "Int"],
+                      P.reservedNames = ["let", "data", "in", "case", "of",
+                                         "match", "with", "branch", "zero",
+                                         "nonzero", "Int", "__"],
                       P.reservedOpNames = ["+", "-", "*", "~", "!", "@", "&",
                                            "->", "="],
                       P.caseSensitive = True}
@@ -62,18 +67,25 @@ funDecl = do
   result <- typ
   colon
   var <- identifier
-  args <- M.fromList <$>
-          (braces . commaSep) ((,) <$> typ <* colon <*> identifier)
+  args <- M.fromList <$> (braces . commaSep)
+          ((,) <$> typ <* colon <*> identifier)
   reservedOp "="
   body <- exp
   return (TFun (M.keysSet args) result, var, E $ EFun args body)
+
+matchCase = do
+  reservedOp "&"
+  args <- M.fromList <$> (braces . commaSep)
+          ((,) <$> typ <* colon <*> identifier)
+  reservedOp "->"
+  body <- exp
+  return (TProd (M.keysSet args), ("__", E $ EMatch (E $ EVar "__") args body))
 
 exp = buildExpressionParser ops term
 
 term = (parens exp <|>) . (E <$>) $ choice
        [EPrim <$> natural,
         try $ ETag <$> identifier <* reservedOp "~" <*> term,
-        try $ ETag <$> identifier <* reservedOp "~!" <*> (E . EUntag <$> term),
         EVar <$> identifier,
         EUntag <$ reservedOp "!" <*> term,
         ESum <$ reservedOp "@" <*> (Left <$> identifier <|>
@@ -93,10 +105,23 @@ term = (parens exp <|>) . (E <$>) $ choice
                    (,,) <$> typ <* colon <*> identifier <*
                    reservedOp "=" <*> exp) <*
                  reserved "in" <*> exp,
-        EDatas <$ reserved "type" <*> (braces . ((optional semi) *>) . semiSep)
+        ECases <$ reserved "case" <*> exp <* reserved "of" <*>
+                   ((M.fromList <$>) . braces . ((optional semi) *>) . semiSep)
+                   (try matchCase <|> (,) <$> typ <* colon <*>
+                    ((,) <$> identifier <* reservedOp "->" <*> exp)),
+        EMatch <$ reserved "match" <*> exp <* reserved "with" <*
+               reservedOp "&" <*> ((M.fromList <$>) . braces . commaSep)
+                              ((,) <$> typ <* colon <*> identifier) <*
+                              reservedOp "->" <*> exp,
+        EDatas <$ reserved "data" <*> (braces . ((optional semi) *>) . semiSep)
                    ((,) <$> identifier <*
                     reservedOp "=" <* reservedOp "@" <*> typs) <*
                   reserved "in" <*> exp]
+
+decomment = many $ choice $ map try
+            [(string "{-" <* manyTill anyToken (string "-}")) *> pure '\n',
+             (string "--" <* manyTill anyToken endOfLine) *> pure '\n',
+             anyToken]
 
 layout lines =
     let avoidSemi nextLine =
@@ -109,4 +134,7 @@ layout lines =
          ("":l:ls) -> (if avoidSemi l then "" else ";") : layout (l:ls)
          (l:ls) -> l : layout ls
 
-go = fmap run . parse exp "" . unlines . layout . lines
+parse = Parsec.parse exp "" . unlines . layout . lines <=<
+        Parsec.parse decomment ""
+
+go = fmap run . parse

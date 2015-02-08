@@ -1,4 +1,17 @@
-let {
+data {
+
+  List = @{Nil~Int, &{Int, List}}
+
+} in let {
+
+  List : nil = @List Nil~0
+
+  List : cons {Int : x, List : xs} = @List &{x, xs}
+
+  List : map {{Int} -> Int : f, List : xs} = case xs of {
+    ; Nil~Int : _ -> nil
+    ; &{Int : x, List : xs} -> cons (f x) (map xs f)
+    }
 
   Int : factorial {Int : x} =
     branch x zero 1 nonzero x * factorial (x-1)
@@ -10,4 +23,4 @@ let {
       nonzero fib Acc0~!a1 Acc1~(!a0+!a1) (x-1)
   } in fib Acc0~0 Acc1~1
 
-} in factorial 5 + fibonacci 12
+} in map factorial (cons (cons 3 (cons nil 5)) 4)
